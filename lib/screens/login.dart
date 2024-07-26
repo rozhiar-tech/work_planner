@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' as auth;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:work_planner/screens/home.dart';
+import 'package:work_planner/helpers/Users.dart'
+    as custom_user; // Import the custom user class with an alias
 
 class LoginPage extends StatefulWidget {
   @override
@@ -9,29 +12,73 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  bool isDarkMode = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() {
+      isDarkMode = prefs.getBool('isDarkMode') ?? false;
+    });
+  }
+
+  Future<void> _toggleTheme() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() {
+      isDarkMode = !isDarkMode;
+      prefs.setBool('isDarkMode', isDarkMode);
+    });
+  }
+
+  final auth.FirebaseAuth _auth = auth.FirebaseAuth.instance;
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   String? errorMessage;
 
   Future<void> _signIn() async {
     try {
-      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
+      auth.UserCredential userCredential =
+          await _auth.signInWithEmailAndPassword(
         email: _emailController.text,
         password: _passwordController.text,
       );
       // Save user ID in shared preferences
       SharedPreferences prefs = await SharedPreferences.getInstance();
       await prefs.setString('user_id', userCredential.user!.uid);
-      // Navigate to home page
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => const HomePage(),
-        ),
-      );
-    } on FirebaseAuthException catch (e) {
-      print(errorMessage);
+
+      // Fetch user information from Firestore
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userCredential.user!.uid)
+          .get();
+
+      if (userDoc.exists) {
+        custom_user.User user = custom_user.User.fromFirestore(
+            userDoc.data() as Map<String, dynamic>, userDoc.id);
+
+        // Navigate to home page with user information
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => HomePage(
+              toggleTheme: _toggleTheme,
+              isDarkMode: isDarkMode,
+              user: user,
+            ),
+          ),
+        );
+      } else {
+        setState(() {
+          errorMessage = "User not found in the database.";
+        });
+      }
+    } on auth.FirebaseAuthException catch (e) {
+      print(e.message);
       setState(() {
         errorMessage = e.message;
       });
